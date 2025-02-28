@@ -224,3 +224,119 @@ lines remain")
          (lines (split-string input "\n"))
          (result (gptel-aibo--parse-code-block lines)))
     (should (equal (car result) 'error))))
+
+(ert-deftest test-gptel-aibo--parse-search-replace-pair ()
+  "Test gptel-aibo--parse-search-replace-pair"
+  (let* ((input "\n\n")
+         (lines (split-string input "\n"))
+         (result (gptel-aibo--parse-search-replace-pair lines)))
+    (should (equal (car result) nil))
+    (should (equal (cdr result) nil)))
+
+  (let* ((input "\n\nhello")
+         (lines (split-string input "\n"))
+         (result (gptel-aibo--parse-search-replace-pair lines)))
+    (should (equal (car result) nil))
+    (should (equal (cdr result) '("hello"))))
+
+  (let* ((input "\n\n*SEARCH*")
+         (lines (split-string input "\n"))
+         (result (gptel-aibo--parse-search-replace-pair lines)))
+    (should (equal (car result) 'error)))
+
+  (let* ((input "
+*SEARCH*
+```
+hello
+```
+")
+         (lines (split-string input "\n"))
+         (result (gptel-aibo--parse-search-replace-pair lines)))
+    (should (equal (car result) 'error)))
+
+  (let* ((input "
+*SEARCH*
+```
+hello
+```
+*REPLACE*
+")
+         (lines (split-string input "\n"))
+         (result (gptel-aibo--parse-search-replace-pair lines)))
+    (should (equal (car result) 'error)))
+
+  (let* ((input "
+*SEARCH*
+```
+hello
+```
+*REPLACE*
+```
+world
+```
+remains")
+         (lines (split-string input "\n"))
+         (result (gptel-aibo--parse-search-replace-pair lines)))
+    (should (equal (car result) '("hello" . "world")))
+    (should (equal (cdr result) '("remains")))))
+
+(ert-deftest test-gptel-aibo--parse-search-replace-pairs ()
+  "Test gptel-aibo--parse-search-replace-pairs"
+  (let* ((input "\n\n")
+         (lines (split-string input "\n"))
+         (result (gptel-aibo--parse-search-replace-pairs lines)))
+    (should (equal (car result) nil))
+    (should (equal (cdr result) nil)))
+
+  (let* ((input "\n\nhello")
+         (lines (split-string input "\n"))
+         (result (gptel-aibo--parse-search-replace-pairs lines)))
+    (should (equal (car result) nil))
+    (should (equal (cdr result) '("hello"))))
+
+  (let* ((input "\n\n*SEARCH*")
+         (lines (split-string input "\n"))
+         (result (gptel-aibo--parse-search-replace-pairs lines)))
+    (should (equal (car result) 'error)))
+
+  (let* ((input "
+*SEARCH*
+```
+hello
+```
+*REPLACE*
+```
+world
+```
+remains")
+         (lines (split-string input "\n"))
+         (result (gptel-aibo--parse-search-replace-pairs lines)))
+    (should (equal (car result) '(("hello" . "world"))))
+    (should (equal (cdr result) '("remains"))))
+
+  (let* ((input "
+*SEARCH*
+```
+hello
+```
+*REPLACE*
+```
+world
+```
+
+*SEARCH*
+```
+good
+```
+*REPLACE*
+```
+morning
+```
+
+remains")
+         (lines (split-string input "\n"))
+         (result (gptel-aibo--parse-search-replace-pairs lines)))
+    (should (equal (car result)
+                   '(("hello" . "world")
+                     ("good" . "morning"))))
+    (should (equal (cdr result) '("remains")))))

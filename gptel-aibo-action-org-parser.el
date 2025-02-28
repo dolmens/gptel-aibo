@@ -111,12 +111,16 @@ Returns the corresponding parser, or nil if the operation type is unknown."
 
    (t
     (let ((result (gptel-aibo--parse-org-search-replace-pairs lines)))
-      (if (eq (car result) 'error)
-          result
+      (cond
+       ((eq (car result) 'error)
+        result)
+       ((null (car result))
+        (list 'error "No valid replacements found"))
+       (t
         (cons (gptel-aibo-make-mod-op
                :target target
                :replacements (car result))
-              (cdr result)))))))
+              (cdr result))))))))
 
 (cl-defstruct (gptel-aibo-creation-op-org-parser
                (:constructor gptel-aibo-make-creation-op-org-parser))
@@ -176,51 +180,75 @@ or (error . message) on failure."
 (defun gptel-aibo--parse-org-search-replace-pairs (lines)
   "Parse search/replace pairs from LINES.
 Returns (replacements . remaining-lines) on success,
-or (error . message) on failure."
+or ''(error message) on failure."
   (let ((replacements nil)
         (parse-error nil)
-        (parse-end nil)) ;; Loop control
-    (while (and lines (not parse-error) (not parse-end))
-      ;; Skip empty lines
-      (while (and lines (string-blank-p (car lines)))
-        (setq lines (cdr lines)))
-
-      ;; If no more lines or current line is not /SEARCH/
-      (if (or (null lines) (not (string= (car lines) "/SEARCH/")))
-          (if (null replacements)
-              (setq parse-error
-                    (list 'error  "No valid search/replace pairs found" lines))
-            (setq parse-end t)) ;; Exit loop if pairs are not empty
-        ;; Found /SEARCH/, parse the search block
-        (let ((search-parse-result (gptel-aibo--parse-org-code-block (cdr lines))))
-          (if (eq (car search-parse-result) 'error)
-              (setq parse-error search-parse-result)
-            (let ((search-content (car search-parse-result))
-                  (remain-lines (cdr search-parse-result)))
-              ;; Skip empty lines before /REPLACE/
-              (while (and remain-lines (string-blank-p (car remain-lines)))
-                (setq remain-lines (cdr remain-lines)))
-
-              ;; Check for /REPLACE/ line
-              (if (or (null remain-lines)
-                      (not (string= (car remain-lines) "/REPLACE/")))
-                  (setq parse-error
-                        (list 'error "Expected /REPLACE/ after search block"
-                              remain-lines))
-                (let ((replace-parse-result
-                       (gptel-aibo--parse-org-code-block (cdr remain-lines))))
-                  (if (eq (car replace-parse-result) 'error)
-                      (setq parse-error replace-parse-result)
-                    ;; Add parsed pair
-                    (push (cons search-content (car replace-parse-result))
-                          replacements)
-                    ;; Update lines to after replace block
-                    (setq lines (cdr replace-parse-result))))))))))
+        (done nil))
+    (while (and lines (not parse-error) (not done))
+      ;; Parse next pair
+      (let ((pair-result (gptel-aibo--parse-org-search-replace-pair lines)))
+        (cond
+         ((eq (car pair-result) 'error)
+          (setq parse-error pair-result))
+         ((null (car pair-result))
+          ;; No more pairs found, set done flag
+          (setq done t)
+          (setq lines (cdr pair-result)))
+         (t
+          ;; Add the parsed pair and continue
+          (push (car pair-result) replacements)
+          (setq lines (cdr pair-result))))))
 
     ;; Return results or error
     (if parse-error
         parse-error
       (cons (nreverse replacements) lines))))
+
+(defun gptel-aibo--parse-org-search-replace-pair (lines)
+  "Parse a single search/replace pair from LINES.
+
+Returns (nil . remaining-lines) if no /SEARCH/ found.
+Returns ''(error message) when format error occurs.
+Returns ((search . replace) . remaining-lines) on success."
+  ;; Skip empty lines before /SEARCH/
+  (while (and lines (string-blank-p (car lines)))
+    (setq lines (cdr lines)))
+  ;; Return nil if no /SEARCH/ marker found
+  (if (or (null lines) (not (string= (car lines) "/SEARCH/")))
+      (cons nil lines)
+    (catch 'parse-result
+
+      ;; Parse search block
+      (let* ((search-parse-result (gptel-aibo--parse-org-code-block (cdr lines)))
+             (search-content (car search-parse-result))
+             (remain-lines (cdr search-parse-result)))
+
+        ;; Throw if search content parsing failed
+        (when (eq (car search-parse-result) 'error)
+          (throw 'parse-result search-parse-result))
+
+        ;; Skip empty lines before /REPLACE/
+        (while (and remain-lines (string-blank-p (car remain-lines)))
+          (setq remain-lines (cdr remain-lines)))
+
+        ;; Throw if no /REPLACE/ marker found
+        (when (or (null remain-lines)
+                  (not (string= (car remain-lines) "/REPLACE/")))
+          (throw 'parse-result
+                 (list 'error "Expected /REPLACE/ after search block")))
+
+        ;; Parse replace block
+        (let* ((replace-parse-result
+                (gptel-aibo--parse-org-code-block (cdr remain-lines)))
+               (replace-content (car replace-parse-result))
+               (remain-lines (cdr replace-parse-result)))
+
+          ;; Throw if replace content parsing failed
+          (when (eq (car replace-parse-result) 'error)
+            (throw 'parse-result replace-parse-result))
+
+          ;; Return successful parse result
+          (cons (cons search-content replace-content) remain-lines))))))
 
 (defun gptel-aibo--extract-org-inline (str)
   "Remove org inline code from STR."
