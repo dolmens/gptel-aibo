@@ -25,6 +25,7 @@
 ;;; Code:
 
 (require 'cl-lib)
+(require 'gptel-aibo-face)
 
 (cl-defstruct (gptel-aibo-diff (:constructor gptel-aibo-make-diff))
   type
@@ -151,8 +152,7 @@ If no BUFFER is provided, the current buffer is used."
 (defun gptel-aibo--inplace-show-diffs (start-point end-point diffs)
   "Apply DIFFS to the region between START-POINT and END-POINT."
   (save-excursion
-    (let ((original-content (buffer-substring-no-properties start-point end-point))
-          (total-overlay (make-overlay start-point start-point))
+    (let ((total-overlay (make-overlay start-point start-point))
           (sub-ovs '()))
 
       (overlay-put total-overlay 'evaporate t)
@@ -171,26 +171,23 @@ If no BUFFER is provided, the current buffer is used."
             ;; Insert matched content with no overlay
             (:matched
              (insert content))
-            ;; Handle removed content (red highlight)
             (:removed
              (setq start (point))
              (insert content)
              (setq overlay (make-overlay start (point)))
-             (overlay-put overlay 'face '(:background "red"))
+             (overlay-put overlay 'face 'gptel-aibo-diff-removed)
              (overlay-put overlay 'evaporate t)
              (push overlay sub-ovs))
-            ;; Handle added content (green highlight)
             (:added
              (setq start (point))
              (insert content)
              (setq overlay (make-overlay start (point)))
-             (overlay-put overlay 'face '(:background "green"))
+             (overlay-put overlay 'face 'gptel-aibo-diff-added)
              (overlay-put overlay 'evaporate t)
              (push overlay sub-ovs)))))
 
       (move-overlay total-overlay start-point (point))
       (overlay-put total-overlay 'sub-ovs sub-ovs)
-      (overlay-put total-overlay 'original-content original-content)
 
       total-overlay)))
 

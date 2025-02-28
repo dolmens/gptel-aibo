@@ -26,6 +26,7 @@
 
 (require 'gptel-aibo-action-parser)
 (require 'gptel-aibo-inplace-diff)
+(require 'gptel-aibo-face)
 
 ;;;###autoload
 (defun gptel-aibo-summon ()
@@ -65,13 +66,14 @@ FetchContent_MakeAvailable(fmt absl spdlog)
 
 (defun gptel-aibo--summon-on-response (buffer point response)
   "Parse RESPONSE and apply modifcations on BUFFER at POINT."
-  (let ((parse-result (gptel-aibo--summon-parse-response response)))
-    (if (eq (car parse-result) 'error)
-        (message (cadr parse-result))
-      (let ((insertion (car parse-result))
-            (nearby-modification (cadr parse-result)))
-        (gptel-aibo--summon-apply buffer point insertion
-                                  nearby-modification)))))
+  (unless (string-match-p "\\`[ \t\n\r]*\\'" response)
+    (let ((parse-result (gptel-aibo--summon-parse-response response)))
+      (if (eq (car parse-result) 'error)
+          (message "LLM responds with format error: %s" (cadr parse-result))
+        (let ((insertion (car parse-result))
+              (nearby-modification (cadr parse-result)))
+          (gptel-aibo--summon-apply buffer point insertion
+                                    nearby-modification))))))
 
 (defun gptel-aibo--summon-parse-response (response)
   "Parse GPT response into insertion and nearby modification.
@@ -122,15 +124,16 @@ If NEARBY-MODIFICATION is provided, it will be parsed asynchronously."
          source
          replacement
          (lambda (diffs)
-           (gptel-aibo--summon-apply-with-nearby-diffs
-            buffer point insertion (cons source diffs)))))
-    (gptel-aibo--summon-apply-with-nearby-diffs buffer point insertion nil)))
+           (gptel-aibo--summon-apply-with-nearby-modification-diffs
+            buffer point insertion (cons nearby-modification diffs)))))
+    (gptel-aibo--summon-apply-with-nearby-modification-diffs
+     buffer point insertion nil)))
 
-(defun gptel-aibo--summon-apply-with-nearby-diffs
-    (buffer point insertion nearby-modification)
+(defun gptel-aibo--summon-apply-with-nearby-modification-diffs
+    (buffer point insertion nearby-modification-diffs)
   "Insert INSERTION at POINT in BUFFER with completion overlay.
 
-If NEARBY-MODIFICATION is provided, it will be applied also."
+If NEARBY-MODIFICATION-DIFFS is provided, it will be applied also."
 
   (with-current-buffer buffer
     (save-excursion
@@ -165,12 +168,12 @@ If NEARBY-MODIFICATION is provided, it will be applied also."
             (let ((ins-ov (make-overlay insert-beg insert-end))
                   (mod-ov nil)
                   (keymap (make-sparse-keymap)))
-              (overlay-put ins-ov 'face '(:background "lightgray"))
+              (overlay-put ins-ov 'face 'gptel-aibo-diff-added)
               (overlay-put ins-ov 'keymap keymap)
 
-              (when nearby-modification
-                (let ((source (car nearby-modification))
-                      (diffs (cdr nearby-modification)))
+              (when nearby-modification-diffs
+                (let ((source (caar nearby-modification-diffs))
+                      (diffs (cdr nearby-modification-diffs)))
                   (when (search-forward source nil t)
                     (setq mod-ov
                           (gptel-aibo--inplace-show-diffs
@@ -185,29 +188,31 @@ If NEARBY-MODIFICATION is provided, it will be applied also."
                   (interactive)
                   (goto-char (overlay-end ins-ov))
                   (delete-overlay ins-ov)
-                  (when mod-ov
-                    (let ((mod-sub-ovs (overlay-get mod-ov 'sub-ovs)))
-                      (dolist (ov mod-sub-ovs)
-                        (delete-overlay ov)))
-                    (delete-overlay mod-ov)))))
+
+                  ;; Overlays will be deleted automatically after the region
+                  (when (and nearby-modification-diffs mod-ov)
+                    (save-excursion
+                      (let ((start (overlay-start mod-ov))
+                            (end (overlay-end mod-ov)))
+                        (delete-region start end)
+                        (goto-char start)
+                        (insert (cdar nearby-modification-diffs))))))))
 
               (define-key
                keymap [t]
                (lambda ()
                  (interactive)
-                 (delete-region insert-beg insert-end)
                  (delete-overlay ins-ov)
+                 (delete-region insert-beg insert-end)
 
-                 (when mod-ov
-                   (let ((mod-sub-ovs (overlay-get mod-ov 'sub-ovs)))
-                     (dolist (ov mod-sub-ovs)
-                       (delete-overlay ov)))
+                 ;; Overlays will be deleted automatically after the region
+                 (when (and nearby-modification-diffs mod-ov)
                    (save-excursion
-                     (let ((original-start (overlay-start mod-ov))
-                           (original-content (overlay-get mod-ov 'original-content)))
-                       (delete-region (overlay-start mod-ov) (overlay-end mod-ov))
-                       (goto-char original-start)
-                       (insert original-content))))
+                     (let ((start (overlay-start mod-ov))
+                           (end (overlay-end mod-ov)))
+                       (delete-region start end)
+                       (goto-char start)
+                       (insert (caar nearby-modification-diffs)))))
 
                  (let ((cmd (key-binding (this-command-keys-vector))))
                    (when cmd
